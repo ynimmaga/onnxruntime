@@ -2029,8 +2029,11 @@ void Graph::SetDescription(const std::string& description) {
 }
 
 void Graph::AddInitializedTensor(const TensorProto& tensor) {
-  ORT_ENFORCE(name_to_initial_tensor_.find(tensor.name()) == name_to_initial_tensor_.cend(),
-              tensor.name(), " already exists.");
+  auto existing = name_to_initial_tensor_.find(tensor.name());
+  if (existing != name_to_initial_tensor_.cend()) {
+    ORT_ENFORCE(existing->second == &tensor,
+                "AddInitializedTensor already has tensor with name ", tensor.name(), " but different TensorProto.");
+  }
 
   const gsl::not_null<TensorProto*> tensor_added{graph_proto_->add_initializer()};
   *(tensor_added) = tensor;
