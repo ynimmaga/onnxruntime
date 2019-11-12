@@ -1,4 +1,4 @@
-FROM quay.io/pypa/manylinux2010_x86_64@sha256:43fc72ccbec227f361f7666efc035254e457deb8d1361b803496637dacb03eca
+FROM quay.io/pypa/manylinux2010_x86_64@sha256:769ebb45d83cc2c6f727bed40bc6b878c4b43cb44f33af8a55b2e1512ea99b5b
 
 ARG PYTHON_VERSION=3.5
 

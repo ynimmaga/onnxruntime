@@ -1,4 +1,4 @@
-FROM quay.io/pypa/manylinux1_x86_64@sha256:b5c4a09d232fda6cf60c4c28dd27eae3f845007aea3364cf2f5561d8c8e0ab68
+FROM quay.io/pypa/manylinux1_x86_64@sha256:b528e8117174405fe9cda6a62486e12d1c1a2e5379bd32b3f580e588becb79d3
 
 ARG PYTHON_VERSION
 ADD scripts /tmp/scripts
