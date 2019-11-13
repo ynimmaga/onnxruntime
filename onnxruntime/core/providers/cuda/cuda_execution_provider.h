@@ -34,20 +34,20 @@ class CUDAExecutionProvider : public IExecutionProvider {
 
   Status OnRunEnd() override;
 
-  cublasHandle_t PerThreadCublasHandle() {
+  cublasHandle_t PerThreadCublasHandle() const {
     return GetPerThreadContext().CublasHandle();
   }
 
-  cudnnHandle_t PerThreadCudnnHandle() {
+  cudnnHandle_t PerThreadCudnnHandle() const {
     return GetPerThreadContext().CudnnHandle();
   }
 
   template <typename T>
-  const T* GetConstOnes(size_t count) {
+  const T* GetConstOnes(size_t count) const {
     return GetPerThreadContext().template GetConstOnes<T>(count);
   }
 
-  void AddDeferredReleaseCPUPtr(void* p);
+  void AddDeferredReleaseCPUPtr(void* p) const;
 
   template <typename T>
   inline IAllocatorUniquePtr<T> GetScratchBuffer(size_t count_or_bytes) const {
@@ -73,8 +73,9 @@ class CUDAExecutionProvider : public IExecutionProvider {
     bool recorded = false;
     std::vector<void*> cpu_ptrs;
   };
-  std::unordered_map<cudaEvent_t, DeferredReleaseCPUPtrs> deferred_release_cpu_ptr_;
-  OrtMutex deferred_release_cpu_ptr_mutex_;
+
+  mutable std::unordered_map<cudaEvent_t, DeferredReleaseCPUPtrs> deferred_release_cpu_ptr_;
+  mutable OrtMutex deferred_release_cpu_ptr_mutex_;
 
   class PerThreadContext final {
    public:
@@ -94,7 +95,7 @@ class CUDAExecutionProvider : public IExecutionProvider {
     }
 
     template <typename T>
-    const T* GetConstOnes(size_t count) {
+    const T* GetConstOnes(size_t count) const {
       if (std::is_same<T, float>::value) {
         if (!constant_ones_float_) {
           constant_ones_float_ = cuda::CreateConstantOnes<float>();
@@ -128,9 +129,10 @@ class CUDAExecutionProvider : public IExecutionProvider {
     // so the ownership is passed to deferred_release_cpu_ptr_
     cudaEvent_t current_deferred_release_event_ = nullptr;
 
-    std::unique_ptr<cuda::IConstantBuffer<float>> constant_ones_float_;
-    std::unique_ptr<cuda::IConstantBuffer<double>> constant_ones_double_;
-    std::unique_ptr<cuda::IConstantBuffer<half>> constant_ones_half_;
+    // constants with delayed allocation
+    mutable std::unique_ptr<cuda::IConstantBuffer<float>> constant_ones_float_;
+    mutable std::unique_ptr<cuda::IConstantBuffer<double>> constant_ones_double_;
+    mutable std::unique_ptr<cuda::IConstantBuffer<half>> constant_ones_half_;
 
     AllocatorPtr allocator_;
   };

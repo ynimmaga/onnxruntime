@@ -103,6 +103,8 @@ struct Scan<9>::Info : public scan::detail::Info {
       : scan::detail::Info(node, subgraph_in, num_scan_inputs_in, /* is_v8 */ false) {}
 };
 
+using TransposeFunc = std::function<Status(const std::vector<size_t>& permutations, const Tensor& input, Tensor& output)>;
+
 class ScanImpl {
  public:
   ScanImpl(OpKernelContextInternal& context,
@@ -111,7 +113,8 @@ class ScanImpl {
            const std::vector<int64_t>& input_directions,
            const std::vector<int64_t>& output_directions,
            const std::vector<int64_t>& input_axes,
-           const std::vector<int64_t>& output_axes);
+           const std::vector<int64_t>& output_axes,
+           TransposeFunc&& transpose_func);
 
   // Initialize by validating all the inputs, and allocating the output tensors
   Status Initialize();
@@ -153,6 +156,8 @@ class ScanImpl {
   std::vector<OrtValue> inputs_;
   std::vector<std::unique_ptr<OutputIterator>> output_iterators_;
   const std::vector<const OrtValue*>& implicit_inputs_;
+
+  TransposeFunc transpose_func_;
 };
 
 template <>
@@ -202,7 +207,7 @@ Status Scan<9>::SetupSubgraphExecutionInfo(const SessionState& session_state,
 
   const auto& node = Node();
   info_ = onnxruntime::make_unique<Scan<9>::Info>(node, *subgraph_session_state.GetGraphViewer(),
-                                          static_cast<int>(num_scan_inputs_));
+                                                  static_cast<int>(num_scan_inputs_));
 
   auto status = scan::detail::CreateFeedsFetchesManager(node, *info_, session_state, subgraph_session_state,
                                                         /* is_v8 */ false, feeds_fetches_manager_);
@@ -219,8 +224,12 @@ Status Scan<9>::Compute(OpKernelContext* ctx) const {
   auto* session_state = ctx_internal->SubgraphSessionState("body");
   ORT_ENFORCE(session_state, "Subgraph SessionState was not found for 'body' attribute.");
 
+  auto transpose_func = [this](const std::vector<size_t>& permutations, const Tensor& input, Tensor& output) {
+    return TransposeOutput(permutations, input, output);
+  };
+
   ScanImpl scan_impl{*ctx_internal, *session_state, *info_, input_directions_, output_directions_,
-                     input_axes_, output_axes_};
+                     input_axes_, output_axes_, std::move(transpose_func)};
 
   auto status = scan_impl.Initialize();
   ORT_RETURN_IF_ERROR(status);
@@ -230,13 +239,19 @@ Status Scan<9>::Compute(OpKernelContext* ctx) const {
   return status;
 }
 
+template <>
+Status Scan<9>::TransposeOutput(const std::vector<size_t>& permutations, const Tensor& input, Tensor& output) const {
+  return TransposeBase::DoTranspose(permutations, input, output);
+}
+
 ScanImpl::ScanImpl(OpKernelContextInternal& context,
                    const SessionState& session_state,
                    const Scan<9>::Info& info,
                    const std::vector<int64_t>& input_directions,
                    const std::vector<int64_t>& output_directions,
                    const std::vector<int64_t>& input_axes,
-                   const std::vector<int64_t>& output_axes)
+                   const std::vector<int64_t>& output_axes,
+                   TransposeFunc&& transpose_func)
     : context_(context),
       session_state_(session_state),
       info_(info),
@@ -244,7 +259,8 @@ ScanImpl::ScanImpl(OpKernelContextInternal& context,
       output_directions_(output_directions),
       input_axes_from_attribute_(input_axes),
       output_axes_from_attribute_(output_axes),
-      implicit_inputs_(context_.GetImplicitInputs()) {
+      implicit_inputs_(context_.GetImplicitInputs()),
+      transpose_func_(std::move(transpose_func)) {
   inputs_.reserve(info_.num_scan_inputs);
   input_axes_.reserve(info_.num_scan_inputs);
 }
@@ -351,7 +367,7 @@ Status ScanImpl::SetupInputs() {
 
       OrtValue transpose_output = scan::detail::AllocateTensorInMLValue(input_tensor.DataType(), new_shape, alloc);
 
-      status = TransposeBase::DoTranspose(permutations, input_tensor, *transpose_output.GetMutable<Tensor>());
+      status = transpose_func_(permutations, input_tensor, *transpose_output.GetMutable<Tensor>());
       ORT_RETURN_IF_ERROR(status);
 
       inputs_.push_back(transpose_output);
@@ -477,7 +493,7 @@ Status ScanImpl::TransposeOutput() {
       Tensor* output = context_.Output(output_index, new_shape);
       ORT_ENFORCE(output, "Outputs from Scan are not optional and should never be null.");
 
-      status = TransposeBase::DoTranspose(permutations, temporary_output_tensor, *output);
+      status = transpose_func_(permutations, temporary_output_tensor, *output);
       ORT_RETURN_IF_ERROR(status);
     }
   }

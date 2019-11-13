@@ -155,7 +155,7 @@ Status Scan<8>::SetupSubgraphExecutionInfo(const SessionState& session_state,
 
   const auto& node = Node();
   info_ = onnxruntime::make_unique<Scan<8>::Info>(node, *subgraph_session_state.GetGraphViewer(),
-                                          static_cast<int>(num_scan_inputs_));
+                                                  static_cast<int>(num_scan_inputs_));
 
   auto status = scan::detail::CreateFeedsFetchesManager(node, *info_, session_state, subgraph_session_state,
                                                         /* is_v8 */ true, feeds_fetches_manager_);
@@ -184,6 +184,10 @@ Status Scan<8>::Compute(OpKernelContext* ctx) const {
   status = scan_impl.Execute(*feeds_fetches_manager_);
 
   return status;
+}
+
+Status Scan<8>::TransposeOutput(const std::vector<size_t>& permutations, const Tensor& input, Tensor& output) const {
+  ORT_NOT_IMPLEMENTED("Scan<8> spec does not support transpose of output. This should never be called.");
 }
 
 Scan8Impl::Scan8Impl(OpKernelContextInternal& context,

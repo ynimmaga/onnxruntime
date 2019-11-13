@@ -12,7 +12,7 @@
 
 namespace onnxruntime {
 template <int OpSet>
-class Scan final : public OpKernel, public controlflow::IControlFlowKernel {
+class Scan : public OpKernel, public controlflow::IControlFlowKernel {
  public:
   Scan(const OpKernelInfo& info);
 
@@ -25,6 +25,11 @@ class Scan final : public OpKernel, public controlflow::IControlFlowKernel {
   // hide internal implementation details via forward declaration.
   struct Info;
   ~Scan();
+
+ protected:
+  // Method that derived class can override in order to provide device specific transpose of output
+  virtual common::Status TransposeOutput(const std::vector<size_t>& permutations,
+                                         const Tensor& input, Tensor& output) const;
 
  private:
   int64_t num_scan_inputs_;

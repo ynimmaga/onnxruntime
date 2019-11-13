@@ -31,7 +31,7 @@ class CudaKernel : public OpKernel {
   explicit CudaKernel(const OpKernelInfo& info)
       : OpKernel(info),
         // Is this OK to have a non-const execution provider?
-        provider_(const_cast<CUDAExecutionProvider*>(dynamic_cast<const CUDAExecutionProvider*>(info.GetExecutionProvider()))) {
+        provider_(dynamic_cast<const CUDAExecutionProvider*>(info.GetExecutionProvider())) {
   }
 
   Status Compute(OpKernelContext* p_op_kernel_context) const override {
@@ -150,7 +150,7 @@ class CudaKernel : public OpKernel {
   inline int GetDeviceId() const { return provider_->GetDeviceId(); }
 
  private:
-  CUDAExecutionProvider* provider_;
+  const CUDAExecutionProvider* provider_;
 };
 
 // Type mapping for MLFloat16 to half
