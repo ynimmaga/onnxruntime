@@ -212,9 +212,9 @@ const Node* GetInputNode(const Node& node, int arg_index);
 
 struct MatchEdgeInfo {
   int dst_arg_index;
-  const std::string& op_type;
-  const std::initializer_list<ONNX_NAMESPACE::OperatorSetVersion>& versions;
-  const std::string& domain;
+  std::string op_type;
+  std::initializer_list<ONNX_NAMESPACE::OperatorSetVersion> versions;
+  std::string domain;
 };
 
 /*

@@ -71,10 +71,11 @@ Status ReshapeFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level) c
     }
 
     // path 1: [Root] --> Shape --> Gather(indices=0) --> Unsqueeze (axes=0) --> Concat [input 0]
-    const std::vector<graph_utils::MatchEdgeInfo>& parent_path_1 = {
+    const std::vector<graph_utils::MatchEdgeInfo>& parent_path_1 {
         {0, "Unsqueeze", {1}, kOnnxDomain},
         {0, "Gather", {1}, kOnnxDomain},
-        {0, "Shape", {1}, kOnnxDomain}};
+        {0, "Shape", {1}, kOnnxDomain}
+    };
 
     std::vector<const Node::EdgeEnd*> path1;
     if (!graph_utils::FindParentPath(concat, parent_path_1, path1)) {
@@ -101,79 +102,80 @@ Status ReshapeFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level) c
       continue;
     }
 
-    // path 2: [Root] --> Shape --> Gather(indices=1) --> Unsqueeze (axes=0) --> Concat [input 1]
-    const std::vector<graph_utils::MatchEdgeInfo>& parent_path_2 = {
-        {1, "Unsqueeze", {1}, kOnnxDomain},
-        {0, "Gather", {1}, kOnnxDomain},
-        {0, "Shape", {1}, kOnnxDomain}};
-
-    std::vector<const Node::EdgeEnd*> path2;
-    if (!graph_utils::FindParentPath(concat, parent_path_2, path2)) {
-      continue;
-    }
-
-    const Node& unsqueeze_2 = path2[0]->GetNode();
-    const Node& gather_2 = path2[1]->GetNode();
-    const Node& shape_2 = path2[2]->GetNode();
-    if (unsqueeze_2.GetOutputEdgesCount() != 1 || gather_2.GetOutputEdgesCount() != 1 || shape_2.GetOutputEdgesCount() != 1) {
-      continue;
-    }
-
-    if (graph_utils::GetInputNode(shape_2, 0) != p_root) {
-      continue;
-    }
-
-    if (!(graph_utils::GetRepeatedNodeAttributeValues(unsqueeze_2, "axes", axes) && axes.size() == 1 && axes[0] == 0)) {
-      continue;
-    }
-
-    if (!optimizer_utils::CheckConstantInput(graph, *(gather_2.InputDefs()[1]), int(1))) {
-      continue;
-    }
-
     std::vector<int64_t> shape_value = {0, 0};
     if (!graph_utils::NodeArgIsConstant(graph, *(concat.InputDefs()[2])) ||
         !GetConstantInput(graph, *(concat.InputDefs()[2]), shape_value)) {
       continue;
     }
 
+    std::vector<Node*> nodes_to_remove;
+    nodes_to_remove.reserve(6);
+    nodes_to_remove.push_back(graph.GetNode(unsqueeze_2.Index()));
+    nodes_to_remove.push_back(graph.GetNode(gather_2.Index()));
+    nodes_to_remove.push_back(graph.GetNode(shape_2.Index()));
+
     if (concat_input_count > 3) {
+      // path 2: [Root] --> Shape --> Gather(indices=1) --> Unsqueeze (axes=0) --> Concat [input 1]
+      const std::vector<graph_utils::MatchEdgeInfo>& parent_path_2 = {
+          {1, "Unsqueeze", {1}, kOnnxDomain},
+          {0, "Gather", {1}, kOnnxDomain},
+          {0, "Shape", {1}, kOnnxDomain}};
+
+      std::vector<const Node::EdgeEnd*> path2;
+      if (!graph_utils::FindParentPath(concat, parent_path_2, path2)) {
+        continue;
+      }
+
+      const Node& unsqueeze_2 = path2[0]->GetNode();
+      const Node& gather_2 = path2[1]->GetNode();
+      const Node& shape_2 = path2[2]->GetNode();
+      if (unsqueeze_2.GetOutputEdgesCount() != 1 || gather_2.GetOutputEdgesCount() != 1 || shape_2.GetOutputEdgesCount() != 1) {
+        continue;
+      }
+
+      if (graph_utils::GetInputNode(shape_2, 0) != p_root) {
+        continue;
+      }
+
+      if (!(graph_utils::GetRepeatedNodeAttributeValues(unsqueeze_2, "axes", axes) && axes.size() == 1 && axes[0] == 0)) {
+        continue;
+      }
+
+      if (!optimizer_utils::CheckConstantInput(graph, *(gather_2.InputDefs()[1]), int(1))) {
+        continue;
+      }
+
       if (!graph_utils::NodeArgIsConstant(graph, *(concat.InputDefs()[3])) ||
           !GetConstantInput(graph, *(concat.InputDefs()[3]), shape_value)) {
         continue;
       }
+
+      nodes_to_remove.push_back(graph.GetNode(unsqueeze_2.Index()));
+      nodes_to_remove.push_back(graph.GetNode(gather_2.Index()));
+      nodes_to_remove.push_back(graph.GetNode(shape_2.Index()));
     }
 
-    std::vector<std::reference_wrapper<Node>> nodes_to_fuse{
-        *graph.GetNode(unsqueeze_1.Index()),
-        *graph.GetNode(gather_1.Index()),
-        *graph.GetNode(shape_1.Index()),
-        *graph.GetNode(unsqueeze_2.Index()),
-        *graph.GetNode(gather_2.Index()),
-        *graph.GetNode(shape_2.Index()),
-        *graph.GetNode(concat.Index()),
-        *graph.GetNode(reshape.Index())};
+    // Create an initializer with the same name as the concat node output, and replace the concat node
+    const auto& new_initializer_name = concat.OutputDefs()[0]->Name();
+    if (!graph_utils::CanReplaceNodeWithInitializer(graph, concat, new_initializer_name)) {
+      continue;
+    }
+    const auto* shape_def = concat.OutputDefs()[0];
+    ONNX_NAMESPACE::TensorProto shape_initializer_proto;
+    shape_initializer_proto.set_name(shape_def->Name());
+    shape_initializer_proto.add_dims(static_cast<int64_t>(shape_value.size()));
+    shape_initializer_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_INT64);
+    shape_initializer_proto.set_raw_data(shape_value.data(), shape_value.size() * sizeof(int64_t));
+    auto& new_node_arg = graph_utils::AddInitializer(graph, shape_initializer_proto);
+    if (!graph_utils::ReplaceNodeWithInitializer(graph, *graph.GetNode(concat.Index()), new_node_arg)) {
+      continue;
+    }
 
-    //if (!optimizer_utils::IsSafeToFuse(graph, nodes_to_fuse)) {
-    //  continue;
-    //}
-
-    const std::vector<NodeArg*> reshape_input_defs{reshape.MutableInputDefs()[0]};
-    Node& fuse_node = graph.AddNode(graph.GenerateNodeName("Reshape"),
-                                    "Reshape",
-                                    "fused Reshape subgraphs ",
-                                    reshape_input_defs,
-                                    {},
-                                    nullptr,
-                                    kOnnxDomain);
-
-    // Assign provider to this new node. Provider should be same as the provider for old node.
-    fuse_node.SetExecutionProviderType(reshape.GetExecutionProviderType());
-
-    graph_utils::FinalizeNodeFusion(
-        graph,
-        nodes_to_fuse,
-        fuse_node);
+    // Remove nodes not used anymore.
+    for (Node* node : nodes_to_remove) {
+      graph_utils::RemoveNodeOutputEdges(graph, *node);
+      graph.RemoveNode(node->Index());
+    }
 
     modified = true;
   }
