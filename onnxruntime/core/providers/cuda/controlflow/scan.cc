@@ -60,6 +60,10 @@ Status Scan<9>::Compute(OpKernelContext* ctx) const {
   return status;
 }
 
+Status Scan<8>::TransposeOutput(const std::vector<size_t>& permutations, const Tensor& input, Tensor& output) const {
+  ORT_NOT_IMPLEMENTED("Scan<8> spec does not support transpose of output. This should never be called.");
+}
+
 Status Scan<9>::TransposeOutput(const std::vector<size_t>& permutations, const Tensor& input, Tensor& output) const {
   const OpKernelInfo& info = OpKernel::Info();
   return cuda::Transpose::DoTranspose(cuda::Transpose(info), permutations, input, output);

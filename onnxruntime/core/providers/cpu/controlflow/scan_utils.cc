@@ -349,9 +349,8 @@ LoopStateVariable::LoopStateVariable(const OrtValue& original_value, OrtValue& f
   // the OrtValue returned by Input()/Output() gets copied into the execution frame feeds/fetches
   // with the Tensor being used via a shared_ptr (so remains valid during execution and is cleaned up
   // automatically at the end).
-
-  // TODO: check that the Scan input and output device for the loop state variable is the same, and use the
-  // allocator for that device here instead of the temp allocator. Works currently as everything is on CPU.
+  //
+  // Note: The allocator comes from the EP for the Scan node, so will allocate on the default device for that EP.
 
   // if length is > 1, we need a_ for the first output location. otherwise we use final_value for the output.
   if (sequence_len_ > 1) {
@@ -476,12 +475,15 @@ Status OutputIterator::AllocateFinalBuffer() {
   } else {
     // we need to do a transpose at the end so need to write to a temporary buffer when executing the subgraph.
     AllocatorPtr alloc;
-    auto status = context_.GetTempSpaceAllocator(&alloc);
+    auto status = context_.GetTempSpaceAllocator(&alloc);  // get allocator for the EP running this (CPU or CUDA)
     ORT_RETURN_IF_ERROR(status);
 
     temporary_final_output_mlvalue_ = AllocateTensorInMLValue(data_type_, final_shape_, alloc);
     final_output_mlvalue_ = &temporary_final_output_mlvalue_;
   }
+
+  // TODO: Need a way to plug in an alternative implementation of the slicer
+  // for scenarios where pointer arithmetic on the raw data void* doesn't work
 
   // if it's v8 there's always a batch size dimension so we need a slicer to hide that from each iteration
   if (is_v8_) {
