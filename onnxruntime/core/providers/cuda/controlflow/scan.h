@@ -17,13 +17,9 @@ namespace cuda {
 template <int OpSet>
 class Scan final : public onnxruntime::Scan<OpSet> {
  public:
-  Scan(const OpKernelInfo& info) : onnxruntime::Scan<OpSet>(info) {}
+  Scan(const OpKernelInfo& info);
 
   Status Compute(OpKernelContext* ctx) const override;
-
- private:
-  common::Status TransposeOutput(const std::vector<size_t>& permutations,
-                                 const Tensor& input, Tensor& output) const override;
 };
 }  // namespace cuda
 }  // namespace onnxruntime

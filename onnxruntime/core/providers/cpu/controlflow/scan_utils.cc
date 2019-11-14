@@ -79,7 +79,10 @@ void ReadDirections(const OpKernelInfo& info, const std::string& attr_name,
 
 Status AllocateOutput(OpKernelContextInternal& context, const GraphViewer& subgraph,
                       int output_index, bool is_loop_state_var, int64_t batch_size, int64_t sequence_len,
-                      std::unique_ptr<OutputIterator>& output_iterator, ScanDirection direction,
+                      std::unique_ptr<OutputIterator>& output_iterator,
+                      const scan::detail::DeviceHelpers::CreateMutableSlicer& create_slicer_func,
+                      const scan::detail::DeviceHelpers::ZeroData& zero_data_func,
+                      ScanDirection direction,
                       bool temporary) {
   // use the shape from the subgraph output. we require this to be specified in the model or inferable.
   auto& graph_outputs = subgraph.GetOutputs();
@@ -112,6 +115,7 @@ Status AllocateOutput(OpKernelContextInternal& context, const GraphViewer& subgr
 
   if (!temporary) {
     OutputIterator::Create(context, output_index, is_loop_state_var, is_v8, TensorShape(scan_output_dims),
+                           create_slicer_func, zero_data_func,
                            output_iterator, direction);
   } else {
     auto mltype = utils::GetMLDataType(*graph_output);
@@ -120,6 +124,7 @@ Status AllocateOutput(OpKernelContextInternal& context, const GraphViewer& subgr
     auto ml_data_type = static_cast<const TensorTypeBase*>(mltype)->GetElementType();
 
     OutputIterator::Create(context, output_index, is_loop_state_var, is_v8, TensorShape(scan_output_dims),
+                           create_slicer_func, zero_data_func,
                            output_iterator, direction, temporary, ml_data_type);
   }
 
@@ -408,6 +413,8 @@ OutputIterator::OutputIterator(OpKernelContextInternal& context,
                                bool is_loop_state_var,
                                bool is_v8,
                                TensorShape final_shape,
+                               const scan::detail::DeviceHelpers::CreateMutableSlicer& create_slicer_func,
+                               const scan::detail::DeviceHelpers::ZeroData& zero_data_func,
                                ScanDirection direction,
                                bool temporary,
                                MLDataType data_type)
@@ -419,7 +426,9 @@ OutputIterator::OutputIterator(OpKernelContextInternal& context,
       direction_(direction),
       cur_iteration_(0),
       temporary_(temporary),
-      data_type_{data_type} {
+      data_type_{data_type},
+      create_slicer_func_(create_slicer_func),
+      zero_data_func_(zero_data_func) {
   is_concrete_shape_ = final_shape_.Size() >= 0;
 
   if (is_v8) {
@@ -490,16 +499,16 @@ Status OutputIterator::AllocateFinalBuffer() {
     if (is_loop_state_var_) {
       // only one entry is required as we slice on a single dimension
       slicer_iterators_.push_back((direction_ == ScanDirection::kForward)
-                                      ? OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_).begin()
-                                      : OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_).rbegin());
+                                      ? create_slicer_func_(*final_output_mlvalue_, 0, 0).begin()
+                                      : create_slicer_func_(*final_output_mlvalue_, 0, 0).rbegin());
     } else {
       auto batch_size = final_shape_[0];
       for (int i = 0; i < batch_size; ++i) {
         // the slicer handles the sequence dimension (dim 1) so create an entry for each batch
         slicer_iterators_.push_back(
             (direction_ == ScanDirection::kForward)
-                ? OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_, 1, i).begin()
-                : OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_, 1, i).rbegin());
+                ? create_slicer_func_(*final_output_mlvalue_, 1, i).begin()
+                : create_slicer_func_(*final_output_mlvalue_, 1, i).rbegin());
       }
     }
 
@@ -508,8 +517,8 @@ Status OutputIterator::AllocateFinalBuffer() {
     // nothing to slice for a loop state var. slice on dimension 0 (sequence) for the scan outputs.
     if (!is_loop_state_var_) {
       slicer_iterators_.push_back((direction_ == ScanDirection::kForward)
-                                      ? OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_).begin()
-                                      : OrtValueTensorSlicer<OrtValue>::Create(*final_output_mlvalue_).rbegin());
+                                      ? create_slicer_func_(*final_output_mlvalue_, 0, 0).begin()
+                                      : create_slicer_func_(*final_output_mlvalue_, 0, 0).rbegin());
       cur_slicer_iterator_ = slicer_iterators_.begin();
     }
   }

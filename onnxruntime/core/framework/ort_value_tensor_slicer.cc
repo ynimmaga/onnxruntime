@@ -81,8 +81,7 @@ void OrtValueTensorSlicer<T>::Iterator::MaterializeMLValue() const {
   auto sub_tensor = onnxruntime::make_unique<Tensor>(tensor_data_type_, per_iteration_shape_,
                                                      const_cast<void*>(tensor_slice_data_raw), *tensor_location_);
   auto ml_tensor = DataTypeImpl::GetType<Tensor>();
-  current_ =
-      OrtValue{sub_tensor.release(), ml_tensor, ml_tensor->GetDeleteFunc()};
+  current_ = OrtValue{sub_tensor.release(), ml_tensor, ml_tensor->GetDeleteFunc()};
 }
 
 template class OrtValueTensorSlicer<OrtValue>;
